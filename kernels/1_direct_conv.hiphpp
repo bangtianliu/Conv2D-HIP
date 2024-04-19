@@ -1,0 +1,264 @@
+#pragma once
+
+#include <hip/hip_runtime.h>
+#include <hip/hip_vector_types.h>
+
+using elem_t = float;
+using vec_elem_t = float4;
+const int VECTOR_SIZE = 4;
+/*
+BLOCK_WIDTH: width of the block
+BLOCK_HEIGHT: height of the block
+FILTER_WIDTH: width of the filter
+FILTER_HEIGHT: height of the filter
+MALLOC_FILTER_WIDTH: width of the filter in the actual SMEM
+MALLOC_FILTER_HEIGHT: height of the filter in the actual SMEM
+MALLOC_BLOCK_WIDTH: width of the block in the actual SMEM (input)
+MALLOC_BLOCK_HEIGHT: height of the block in the actual SMEM (input)
+*/
+template <const int BLOCK_HEIGHT, const int BLOCK_WIDTH,
+          const int FILTER_HEIGHT, const int FILTER_WIDTH,
+          const int MALLOC_FILTER_HEIGHT, const int MALLOC_FILTER_WIDTH,
+          const int MALLOC_BLOCK_HEIGHT, const int MALLOC_BLOCK_WIDTH,
+          const int MALLOC_OUT_C>
+__global__
+    // __launch_bounds__(64)
+    void
+    gpu_direct_conv2d(elem_t *in, elem_t *out, elem_t *filter, int batch_size,
+                      int inC, int inH, int inW, int outC, int outH, int outW,
+                      int filterH, int filterW) {
+  const int block_y = blockIdx.y;
+  const int block_x = blockIdx.x;
+
+  const int thread_y = threadIdx.y;
+  const int thread_x = threadIdx.x;
+
+  __shared__ elem_t s_filter[MALLOC_FILTER_HEIGHT][MALLOC_FILTER_WIDTH];
+  __shared__ elem_t s_in[MALLOC_BLOCK_HEIGHT][MALLOC_BLOCK_WIDTH];
+
+  float load_reg[VECTOR_SIZE];
+
+
+  // boundary check
+  bool row_boundary = (block_y == gridDim.y - 1);
+  bool col_boundary = (block_x == gridDim.x - 1);
+
+  int in_offset = block_y * BLOCK_HEIGHT * inW + block_x * BLOCK_WIDTH;
+  int in_block_height = BLOCK_HEIGHT + FILTER_HEIGHT - 1;
+  int in_block_width = BLOCK_WIDTH + FILTER_WIDTH - 1;
+
+  // 16 x 4 
+
+  // 21 x 9 
+
+
+  int extra_row = outH % BLOCK_HEIGHT; // 5
+  int extra_col = outW % BLOCK_WIDTH; // 5
+
+  if (row_boundary) {
+    // 16 + 5 + 5
+    in_block_height = BLOCK_HEIGHT + extra_row + FILTER_HEIGHT - 1;
+  }
+
+  if (col_boundary) {
+    // 4 + 5 + 5
+    in_block_width = BLOCK_WIDTH + extra_col + FILTER_WIDTH - 1;
+  }
+
+  int tid = thread_y * blockDim.x + thread_x;
+  // 9 / 4 ==> 2
+  int in_num_vecs_per_row = in_block_width / VECTOR_SIZE;
+  int in_tile_row_start = tid / in_num_vecs_per_row;
+  int in_tile_col_start = tid % in_num_vecs_per_row * VECTOR_SIZE;
+
+  // assert((blockDim.x * blockDim.y) % in_num_vecs_per_row == 0);
+
+  int in_tile_row_stride = (blockDim.x * blockDim.y) / in_num_vecs_per_row;
+
+  // fetch input data from global memory to shared memory
+  for (int i = 0; i < in_block_height && in_tile_row_start < in_block_height;
+       i += in_tile_row_stride) {
+    // may cause bug here
+    // reinterpret_cast<vec_elem_t *>(load_reg)[0] =
+    //     reinterpret_cast<vec_elem_t *>(
+    //         in)[in_offset + (in_tile_row_start + i) * inW + in_tile_col_start];
+
+    const float4 tmp = reinterpret_cast<float4 *>(&(in[in_offset + (in_tile_row_start + i) * inW + in_tile_col_start]))[0]; 
+    s_in[in_tile_row_start + i][in_tile_col_start] = tmp.x;
+    s_in[in_tile_row_start + i][in_tile_col_start + 1] = tmp.y;
+    s_in[in_tile_row_start + i][in_tile_col_start + 2] = tmp.z;
+    s_in[in_tile_row_start + i][in_tile_col_start + 3] = tmp.w;
+
+    // remianing elements
+    if (in_tile_col_start + VECTOR_SIZE < in_block_width &&
+        in_tile_col_start + 2 * VECTOR_SIZE > in_block_width) {
+      for (int j = in_tile_col_start + VECTOR_SIZE; j < in_block_width; j++) {
+        s_in[in_tile_row_start + i][j] =
+            in[in_offset + (in_tile_row_start + i) * inW + j];
+      }
+    }
+  }
+
+  // fetch filter data from global memory to shared memory
+  if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
+    for (int j = 0; j < FILTER_WIDTH; j++) {
+      s_filter[thread_y][j] = filter[thread_y * FILTER_WIDTH + j];
+    }
+  }
+
+  __syncthreads();
+
+  // if(thread_x == 0 && thread_y == 0){
+  //   printf("smem ===> \n");
+  //   for(int row=0; row < 21; row++){
+  //     for(int col=0; col < 9; col++){
+  //       printf("%f ", s_in[row][col]);
+  //     }
+  //     printf("\n");
+  //   } 
+  // }
+
+
+
+  int cur_out_block_height = BLOCK_HEIGHT;
+  int cur_out_block_width = BLOCK_WIDTH;
+
+  if (row_boundary) {
+    cur_out_block_height = cur_out_block_height + extra_row;
+  }
+
+  if (col_boundary) {
+    cur_out_block_width = cur_out_block_width + extra_col;
+  }
+
+  const int num_element_per_thread = 1;
+
+  // here may also cause bugs
+  int out_tile_thread_per_row = cur_out_block_width / num_element_per_thread;
+  int out_tile_row_start = tid / out_tile_thread_per_row;
+  int out_tile_col_start =
+      tid % out_tile_thread_per_row * num_element_per_thread;
+  int out_tile_row_stride = (blockDim.x * blockDim.y) / out_tile_thread_per_row;
+
+  float out_tile[MALLOC_OUT_C] = {0};
+
+  // assert((blockDim.x * blockDim.y) % out_tile_thread_per_row == 0);
+
+  int out_pos, temp_pos;
+
+  for (int oc = 0; oc < outC; oc++) {
+    for (int ic = 0; ic < inC; ic++) {
+      for (int i = 0; i < cur_out_block_height &&
+                      (out_tile_row_start + i) < cur_out_block_height;
+           i += out_tile_row_stride) {
+        for (int j = 0; j < num_element_per_thread; j++) {
+          temp_pos = i / out_tile_row_stride + j +
+                     oc * (cur_out_block_height / out_tile_row_stride + 1);
+
+          for (int ii = 0; ii < FILTER_HEIGHT; ii++) {
+            for (int jj = 0; jj < FILTER_WIDTH; jj++) {
+              out_tile[temp_pos] +=
+                  s_in[out_tile_row_start + i + ii][out_tile_col_start + jj] *
+                  s_filter[ii][jj];
+            }
+          }
+        }
+      }
+
+      if (ic + 1 < inC) {
+        // fetch data for next channel
+        // in_offset += inH * inW;
+
+        for (int i = 0;
+             i < in_block_height && in_tile_row_start < in_block_height;
+             i += in_tile_row_stride) {
+          const float4 tmp = reinterpret_cast<float4 *>(
+              &(in[in_offset + (ic + 1) * (inH * inW) +
+                   (in_tile_row_start + i) * inW + in_tile_col_start]))[0];
+          s_in[in_tile_row_start + i][in_tile_col_start] = tmp.x;
+          s_in[in_tile_row_start + i][in_tile_col_start + 1] = tmp.y;
+          s_in[in_tile_row_start + i][in_tile_col_start + 2] = tmp.z;
+          s_in[in_tile_row_start + i][in_tile_col_start + 3] = tmp.w;
+
+          // remianing elements
+          if (in_tile_col_start + VECTOR_SIZE < in_block_width &&
+              in_tile_col_start + 2 * VECTOR_SIZE > in_block_width) {
+            for (int j = in_tile_col_start + VECTOR_SIZE; j < in_block_width;
+                 j++) {
+              s_in[in_tile_row_start + i][j] =
+                  in[in_offset + +(ic + 1) * (inH * inW) +
+                     (in_tile_row_start + i) * inW + j];
+            }
+          }
+        }
+
+        // fetch kernel
+        if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
+          for (int j = 0; j < FILTER_WIDTH; j++) {
+            s_filter[thread_y][j] =
+                filter[thread_y * FILTER_WIDTH + j +
+                       (ic + 1) * FILTER_HEIGHT * FILTER_WIDTH +
+                       oc * inC * FILTER_HEIGHT * FILTER_WIDTH];
+          }
+        }
+      }
+
+      __syncthreads();
+    }
+
+    // store the result
+    int i = 0, j = 0;
+    while (i < cur_out_block_height &&
+           (out_tile_row_start + i) < cur_out_block_height) {
+      while (j < num_element_per_thread) {
+        out_pos = oc * outH * outW +
+                  (block_y * BLOCK_HEIGHT + out_tile_row_start + i) * outW +
+                  block_x * BLOCK_WIDTH + out_tile_col_start + j;
+        temp_pos = i / out_tile_row_stride + j +
+                   oc * (cur_out_block_height / out_tile_row_stride + 1);
+        out[out_pos] = out_tile[temp_pos];
+
+        j++;
+      }
+      i += out_tile_row_stride;
+      j = 0;
+    }
+
+    if (oc + 1 < outC) {
+      // fetch kernel
+
+      if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
+        for (int j = 0; j < FILTER_WIDTH; j++) {
+          s_filter[thread_y][j] =
+              filter[thread_y * FILTER_WIDTH + j +
+                     (oc + 1) * inC * FILTER_HEIGHT * FILTER_WIDTH];
+        }
+      }
+
+      // fetch input data from global memory to shared memory
+      in_offset = block_y * BLOCK_HEIGHT * inW + block_x * BLOCK_WIDTH;
+
+      for (int i = 0;
+           i < in_block_height && in_tile_row_start < in_block_height;
+           i += in_tile_row_stride) {
+        const float4 tmp = reinterpret_cast<float4 *>(
+            &(in[in_offset + (in_tile_row_start + i) * inW + in_tile_col_start]))[0];  
+
+        s_in[in_tile_row_start + i][in_tile_col_start] = tmp.x;
+        s_in[in_tile_row_start + i][in_tile_col_start + 1] = tmp.y;
+        s_in[in_tile_row_start + i][in_tile_col_start + 2] = tmp.z;
+        s_in[in_tile_row_start + i][in_tile_col_start + 3] = tmp.w;
+
+        // remianing elements
+        if (in_tile_col_start + VECTOR_SIZE < in_block_width &&
+            in_tile_col_start + 2 * VECTOR_SIZE > in_block_width) {
+          for (int j = in_tile_col_start + VECTOR_SIZE; j < in_block_width;
+               j++) {
+            s_in[in_tile_row_start + i][j] =
+                in[in_offset + (in_tile_row_start + i) * inW + j];
+          }
+        }
+      }
+    }
+  }
+}
