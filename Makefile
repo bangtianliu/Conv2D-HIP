@@ -15,7 +15,7 @@ all: conv2d_gpu
 conv2d_gpu: main.o host_conv.o gpu_conv.o
 	$(HIPCXX) -o $@ $^ -v
 
-main.o: main.hip kernels.hpp 
+main.o: main.hip kernels.hpp conv_config.hpp
 	$(HIPCXX) -c -o $@ $< $(ICXXFLAGS) -I$(HIP_INCLUDE_DIR)
 
 host_conv.o: host_conv.hip

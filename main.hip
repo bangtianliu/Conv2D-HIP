@@ -12,11 +12,12 @@
 
 #include "host_conv.hpp"
 #include "gpu_conv.hpp"
+#include "conv_config.hpp"
 
 #define DEVICE_CHECK 
 
-#define WARMUP_RUN 0
-#define TIMING_RUN 1
+#define WARMUP_RUN 10
+#define TIMING_RUN 100
 
 // #define  USE_FP16
 
@@ -40,18 +41,18 @@ constexpr int error_exit_code = -1;
 // convolution implementation on AMD GPU by Bangtian Liu (bangtian.liu@amd.com)
 int main()
 {
-    const int N = 1; 
-    const int inC = 3; 
-    const int inH = 1920; 
-    const int inW = 2400;
+    const int N = CONV_N; 
+    const int inC = CONV_IN_C; 
+    const int inH = CONV_IN_H; 
+    const int inW = CONV_IN_W;
 
-    const int outC = 3;
-    const int filterH = 6;
-    const int filterW = 6;
+    const int outC = CONV_OUT_C;
+    const int filterH = CONV_F_H;
+    const int filterW = CONV_F_W;
 
     //assume stride is 1
-    const int outH = inH - filterH + 1;
-    const int outW = inW - filterW + 1;
+    const int outH = CONV_OUT_H;
+    const int outW = CONV_OUT_W;
 
     float *h_input,*h_filter,*h_output;
 

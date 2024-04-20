@@ -1,5 +1,6 @@
 #include "kernels.hpp"
 #include "gpu_conv.hpp"
+#include "conv_config.hpp"
 
 void run_direct_conv(float * __restrict__ in, 
                float * __restrict__ out, 
@@ -15,13 +16,13 @@ void run_direct_conv(float * __restrict__ in,
                 int filter_width)
 {
 
-    const int BLOCK_HEIGHT = 16;
-    const int BLOCK_WIDTH = 4;
+    const int BLOCK_HEIGHT = 4;
+    const int BLOCK_WIDTH = 16;
     
-    const int FILTER_HEIGHT = 6;
-    const int FILTER_WIDTH = 6;
-    const int INC = 3; 
-    const int OUTC = 3;
+    const int FILTER_HEIGHT = CONV_F_H;
+    const int FILTER_WIDTH = CONV_F_W;
+    const int INC = CONV_IN_C; 
+    const int OUTC = CONV_OUT_C;
     constexpr int MALLOC_FILTER_HEIGHT = FILTER_HEIGHT % 2 == 0 ? FILTER_HEIGHT : FILTER_HEIGHT + 1;
     constexpr int MALLOC_FILTER_WIDTH = FILTER_WIDTH % 2 == 0 ? FILTER_WIDTH : FILTER_WIDTH + 1;
     constexpr int MALLOC_BLOCK_HEIGHT = (BLOCK_HEIGHT + FILTER_HEIGHT) * 2; 
