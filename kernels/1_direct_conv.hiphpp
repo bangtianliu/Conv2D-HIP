@@ -22,7 +22,7 @@ template <const int BLOCK_HEIGHT, const int BLOCK_WIDTH,
           const int MALLOC_BLOCK_HEIGHT, const int MALLOC_BLOCK_WIDTH,
           const int MALLOC_OUT_C>
 __global__
-    // __launch_bounds__(64)
+    __launch_bounds__(64)
     void
     gpu_direct_conv2d(elem_t *in, elem_t *out, elem_t *filter, int batch_size,
                       int inC, int inH, int inW, int outC, int outH, int outW,
@@ -38,7 +38,6 @@ __global__
 
   float load_reg[VECTOR_SIZE];
 
-
   // boundary check
   bool row_boundary = (block_y == gridDim.y - 1);
   bool col_boundary = (block_x == gridDim.x - 1);
@@ -47,13 +46,8 @@ __global__
   int in_block_height = BLOCK_HEIGHT + FILTER_HEIGHT - 1;
   int in_block_width = BLOCK_WIDTH + FILTER_WIDTH - 1;
 
-  // 16 x 4 
-
-  // 21 x 9 
-
-
   int extra_row = outH % BLOCK_HEIGHT; // 5
-  int extra_col = outW % BLOCK_WIDTH; // 5
+  int extra_col = outW % BLOCK_WIDTH;  // 5
 
   if (row_boundary) {
     // 16 + 5 + 5
@@ -65,60 +59,15 @@ __global__
     in_block_width = BLOCK_WIDTH + extra_col + FILTER_WIDTH - 1;
   }
 
-  int tid = thread_y * blockDim.x + thread_x;
-  // 9 / 4 ==> 2
-  int in_num_vecs_per_row = in_block_width / VECTOR_SIZE;
-  int in_tile_row_start = tid / in_num_vecs_per_row;
-  int in_tile_col_start = tid % in_num_vecs_per_row * VECTOR_SIZE;
-
-  // assert((blockDim.x * blockDim.y) % in_num_vecs_per_row == 0);
-
-  int in_tile_row_stride = (blockDim.x * blockDim.y) / in_num_vecs_per_row;
-
-  // fetch input data from global memory to shared memory
-  for (int i = 0; i < in_block_height && in_tile_row_start < in_block_height;
-       i += in_tile_row_stride) {
-    // may cause bug here
-    // reinterpret_cast<vec_elem_t *>(load_reg)[0] =
-    //     reinterpret_cast<vec_elem_t *>(
-    //         in)[in_offset + (in_tile_row_start + i) * inW + in_tile_col_start];
-
-    const float4 tmp = reinterpret_cast<float4 *>(&(in[in_offset + (in_tile_row_start + i) * inW + in_tile_col_start]))[0]; 
-    s_in[in_tile_row_start + i][in_tile_col_start] = tmp.x;
-    s_in[in_tile_row_start + i][in_tile_col_start + 1] = tmp.y;
-    s_in[in_tile_row_start + i][in_tile_col_start + 2] = tmp.z;
-    s_in[in_tile_row_start + i][in_tile_col_start + 3] = tmp.w;
-
-    // remianing elements
-    if (in_tile_col_start + VECTOR_SIZE < in_block_width &&
-        in_tile_col_start + 2 * VECTOR_SIZE > in_block_width) {
-      for (int j = in_tile_col_start + VECTOR_SIZE; j < in_block_width; j++) {
-        s_in[in_tile_row_start + i][j] =
-            in[in_offset + (in_tile_row_start + i) * inW + j];
-      }
-    }
-  }
-
-  // fetch filter data from global memory to shared memory
-  if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
-    for (int j = 0; j < FILTER_WIDTH; j++) {
-      s_filter[thread_y][j] = filter[thread_y * FILTER_WIDTH + j];
-    }
-  }
-
-  __syncthreads();
-
   // if(thread_x == 0 && thread_y == 0){
   //   printf("smem ===> \n");
-  //   for(int row=0; row < 21; row++){
-  //     for(int col=0; col < 9; col++){
+  //   for(int row=0; row < 9; row++){
+  //     for(int col=0; col < 21; col++){
   //       printf("%f ", s_in[row][col]);
   //     }
   //     printf("\n");
-  //   } 
+  //   }
   // }
-
-
 
   int cur_out_block_height = BLOCK_HEIGHT;
   int cur_out_block_width = BLOCK_WIDTH;
@@ -131,134 +80,157 @@ __global__
     cur_out_block_width = cur_out_block_width + extra_col;
   }
 
-  const int num_element_per_thread = 1;
-
-  // here may also cause bugs
-  int out_tile_thread_per_row = cur_out_block_width / num_element_per_thread;
-  int out_tile_row_start = tid / out_tile_thread_per_row;
-  int out_tile_col_start =
-      tid % out_tile_thread_per_row * num_element_per_thread;
-  int out_tile_row_stride = (blockDim.x * blockDim.y) / out_tile_thread_per_row;
 
   float out_tile[MALLOC_OUT_C] = {0};
-
-  // assert((blockDim.x * blockDim.y) % out_tile_thread_per_row == 0);
 
   int out_pos, temp_pos;
 
   for (int oc = 0; oc < outC; oc++) {
+    int out_base = oc * outH * outW + block_y * BLOCK_HEIGHT * outW +
+                   block_x * BLOCK_WIDTH + thread_y * outW + thread_x;
     for (int ic = 0; ic < inC; ic++) {
-      for (int i = 0; i < cur_out_block_height &&
-                      (out_tile_row_start + i) < cur_out_block_height;
-           i += out_tile_row_stride) {
-        for (int j = 0; j < num_element_per_thread; j++) {
-          temp_pos = i / out_tile_row_stride + j +
-                     oc * (cur_out_block_height / out_tile_row_stride + 1);
 
-          for (int ii = 0; ii < FILTER_HEIGHT; ii++) {
-            for (int jj = 0; jj < FILTER_WIDTH; jj++) {
-              out_tile[temp_pos] +=
-                  s_in[out_tile_row_start + i + ii][out_tile_col_start + jj] *
-                  s_filter[ii][jj];
-            }
-          }
+      int num_row_wave = in_block_height / BLOCK_HEIGHT;
+      int num_col_wave = in_block_width / BLOCK_WIDTH;
+
+      for (int i = 0; i < num_row_wave; i++) {
+        for (int j = 0; j < num_col_wave; j++) {
+          s_in[thread_y + i * BLOCK_HEIGHT][thread_x + j * BLOCK_WIDTH] =
+              in[in_offset + (ic) * (inH * inW) +
+                 (thread_y + i * BLOCK_HEIGHT) * inW + thread_x +
+                 j * BLOCK_WIDTH];
+          __syncthreads();
+        }
+        __syncthreads();
+        if ((thread_x + (num_col_wave)*BLOCK_WIDTH) < in_block_width) {
+          s_in[thread_y + i * BLOCK_HEIGHT]
+              [thread_x + (num_col_wave)*BLOCK_WIDTH] =
+                  in[in_offset + (ic) * (inH * inW) +
+                     (thread_y + i * BLOCK_HEIGHT) * inW + thread_x +
+                     (num_col_wave)*BLOCK_WIDTH];
         }
       }
 
-      if (ic + 1 < inC) {
-        // fetch data for next channel
-        // in_offset += inH * inW;
+      __syncthreads();
 
-        for (int i = 0;
-             i < in_block_height && in_tile_row_start < in_block_height;
-             i += in_tile_row_stride) {
-          const float4 tmp = reinterpret_cast<float4 *>(
-              &(in[in_offset + (ic + 1) * (inH * inW) +
-                   (in_tile_row_start + i) * inW + in_tile_col_start]))[0];
-          s_in[in_tile_row_start + i][in_tile_col_start] = tmp.x;
-          s_in[in_tile_row_start + i][in_tile_col_start + 1] = tmp.y;
-          s_in[in_tile_row_start + i][in_tile_col_start + 2] = tmp.z;
-          s_in[in_tile_row_start + i][in_tile_col_start + 3] = tmp.w;
-
-          // remianing elements
-          if (in_tile_col_start + VECTOR_SIZE < in_block_width &&
-              in_tile_col_start + 2 * VECTOR_SIZE > in_block_width) {
-            for (int j = in_tile_col_start + VECTOR_SIZE; j < in_block_width;
-                 j++) {
-              s_in[in_tile_row_start + i][j] =
-                  in[in_offset + +(ic + 1) * (inH * inW) +
-                     (in_tile_row_start + i) * inW + j];
-            }
-          }
+      if (thread_y + (num_row_wave)*BLOCK_HEIGHT < in_block_height) {
+        for (int j = 0; j < num_col_wave; j++) {
+          s_in[thread_y + (num_row_wave)*BLOCK_HEIGHT]
+              [thread_x + j * BLOCK_WIDTH] =
+                  in[in_offset + (ic) * (inH * inW) +
+                     (thread_y + (num_row_wave)*BLOCK_HEIGHT) * inW + thread_x +
+                     j * BLOCK_WIDTH];
         }
 
-        // fetch kernel
+        if (thread_x + (num_col_wave)*BLOCK_WIDTH < in_block_width) {
+          s_in[thread_y + (num_row_wave)*BLOCK_HEIGHT]
+              [thread_x + (num_col_wave)*BLOCK_WIDTH] =
+                  in[in_offset + (ic) * (inH * inW) +
+                     (thread_y + (num_row_wave)*BLOCK_HEIGHT) * inW + thread_x +
+                     (num_col_wave)*BLOCK_WIDTH];
+        }
+      }
+
+      // __syncthreads();
+
+      // if(thread_x == 0 && thread_y == 0 && blockIdx.x == 1 && blockIdx.y ==
+      // 0){
+      //   printf("smem ===> \n");
+      //   for(int row=0; row < 9; row++){
+      //     for(int col=0; col < 32; col++){
+      //       printf("%f ", s_in[row][col]);
+      //     }
+      //     printf("\n");
+      //   }
+      // }
+
+      if (FILTER_HEIGHT < BLOCK_HEIGHT) {
+        // fetch filter data from global memory to shared memory
         if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
           for (int j = 0; j < FILTER_WIDTH; j++) {
             s_filter[thread_y][j] =
                 filter[thread_y * FILTER_WIDTH + j +
-                       (ic + 1) * FILTER_HEIGHT * FILTER_WIDTH +
-                       oc * inC * FILTER_HEIGHT * FILTER_WIDTH];
+                       oc * inC * FILTER_HEIGHT * FILTER_WIDTH +
+                       ic * FILTER_HEIGHT * FILTER_WIDTH];
+          }
+        }
+      } else {
+        int num_wave = FILTER_HEIGHT / BLOCK_HEIGHT;
+        if (thread_x == 0) {
+          for (int i = 0; i < num_wave; i++) {
+            for (int j = 0; j < FILTER_WIDTH; j++) {
+              s_filter[thread_y + i * BLOCK_HEIGHT][j] =
+                  filter[(thread_y + i * BLOCK_HEIGHT) * FILTER_WIDTH + j +
+                         oc * inC * FILTER_HEIGHT * FILTER_WIDTH +
+                         ic * FILTER_HEIGHT * FILTER_WIDTH];
+            }
+          }
+
+          if (thread_y + num_wave * BLOCK_HEIGHT < FILTER_HEIGHT) {
+            for (int j = 0; j < FILTER_WIDTH; j++) {
+              s_filter[thread_y + num_wave * BLOCK_HEIGHT][j] =
+                  filter[(thread_y + num_wave * BLOCK_HEIGHT) * FILTER_WIDTH +
+                         j + oc * inC * FILTER_HEIGHT * FILTER_WIDTH +
+                         ic * FILTER_HEIGHT * FILTER_WIDTH];
+            }
           }
         }
       }
 
       __syncthreads();
-    }
 
-    // store the result
-    int i = 0, j = 0;
-    while (i < cur_out_block_height &&
-           (out_tile_row_start + i) < cur_out_block_height) {
-      while (j < num_element_per_thread) {
-        out_pos = oc * outH * outW +
-                  (block_y * BLOCK_HEIGHT + out_tile_row_start + i) * outW +
-                  block_x * BLOCK_WIDTH + out_tile_col_start + j;
-        temp_pos = i / out_tile_row_stride + j +
-                   oc * (cur_out_block_height / out_tile_row_stride + 1);
-        out[out_pos] = out_tile[temp_pos];
+      float sum = 0.0f;
 
-        j++;
-      }
-      i += out_tile_row_stride;
-      j = 0;
-    }
-
-    if (oc + 1 < outC) {
-      // fetch kernel
-
-      if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
+      for (int i = 0; i < FILTER_HEIGHT; i++) {
         for (int j = 0; j < FILTER_WIDTH; j++) {
-          s_filter[thread_y][j] =
-              filter[thread_y * FILTER_WIDTH + j +
-                     (oc + 1) * inC * FILTER_HEIGHT * FILTER_WIDTH];
+          sum += s_in[thread_y + i][thread_x + j] * s_filter[i][j];
         }
       }
+      int out_pos = out_base;
+      out[out_pos] += sum;
 
-      // fetch input data from global memory to shared memory
-      in_offset = block_y * BLOCK_HEIGHT * inW + block_x * BLOCK_WIDTH;
-
-      for (int i = 0;
-           i < in_block_height && in_tile_row_start < in_block_height;
-           i += in_tile_row_stride) {
-        const float4 tmp = reinterpret_cast<float4 *>(
-            &(in[in_offset + (in_tile_row_start + i) * inW + in_tile_col_start]))[0];  
-
-        s_in[in_tile_row_start + i][in_tile_col_start] = tmp.x;
-        s_in[in_tile_row_start + i][in_tile_col_start + 1] = tmp.y;
-        s_in[in_tile_row_start + i][in_tile_col_start + 2] = tmp.z;
-        s_in[in_tile_row_start + i][in_tile_col_start + 3] = tmp.w;
-
-        // remianing elements
-        if (in_tile_col_start + VECTOR_SIZE < in_block_width &&
-            in_tile_col_start + 2 * VECTOR_SIZE > in_block_width) {
-          for (int j = in_tile_col_start + VECTOR_SIZE; j < in_block_width;
-               j++) {
-            s_in[in_tile_row_start + i][j] =
-                in[in_offset + (in_tile_row_start + i) * inW + j];
+      if (thread_x + BLOCK_WIDTH < cur_out_block_width) {
+        float sum = 0.0f;
+        for (int i = 0; i < FILTER_HEIGHT; i++) {
+          for (int j = 0; j < FILTER_WIDTH; j++) {
+            sum +=
+                s_in[thread_y + i][thread_x + BLOCK_WIDTH + j] * s_filter[i][j];
           }
         }
+
+        int out_pos = out_base + BLOCK_WIDTH;
+        out[out_pos] += sum;
       }
+
+      if (thread_y + BLOCK_HEIGHT < cur_out_block_height) {
+        float sum = 0.0f;
+        for (int i = 0; i < FILTER_HEIGHT; i++) {
+          for (int j = 0; j < FILTER_WIDTH; j++) {
+            sum += s_in[thread_y + BLOCK_HEIGHT + i][thread_x + j] *
+                   s_filter[i][j];
+          }
+        }
+
+        int out_pos = out_base + BLOCK_HEIGHT * outW;
+        out[out_pos] += sum;
+
+        if (thread_x + BLOCK_WIDTH < cur_out_block_width) {
+          float sum = 0.0f;
+          for (int i = 0; i < FILTER_HEIGHT; i++) {
+            for (int j = 0; j < FILTER_WIDTH; j++) {
+              sum += s_in[thread_y + BLOCK_HEIGHT + i]
+                         [thread_x + BLOCK_WIDTH + j] *
+                     s_filter[i][j];
+            }
+          }
+
+          int out_pos = out_base + BLOCK_HEIGHT * outW + BLOCK_WIDTH;
+          out[out_pos] += sum;
+        }
+      }
+
+      // __syncthreads();
     }
+    // __syncthreads();
   }
 }

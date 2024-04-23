@@ -16,8 +16,8 @@
 
 #define DEVICE_CHECK 
 
-#define WARMUP_RUN 10
-#define TIMING_RUN 100
+#define WARMUP_RUN 0
+#define TIMING_RUN 10
 
 // #define  USE_FP16
 
@@ -53,6 +53,11 @@ int main()
     //assume stride is 1
     const int outH = CONV_OUT_H;
     const int outW = CONV_OUT_W;
+
+    //print configuration
+    printf("N = %d, inC = %d, inH = %d, inW = %d\n", N, inC, inH, inW);
+    printf("filterH = %d, filterW = %d\n", filterH, filterW);
+    printf("outC = %d, outH = %d, outW = %d\n", outC, outH, outW);
 
     float *h_input,*h_filter,*h_output;
 
@@ -129,11 +134,11 @@ int main()
     // HIP_CHECK(hipMemcpy(d_output, h_output, o_size * sizeof(float), hipMemcpyHostToDevice));
 
 
-    // for(int row =0; row < 21; row++)
+    // for(int row =0; row < 9; row++)
     // {
-    //     for(int col = 0; col < 9; col++)
+    //     for(int col = 0; col < 21; col++)
     //     {
-    //         printf("%f ", h_input[row*9 + col]);
+    //         printf("%f ", h_input[row*inW + col]);
     //     }
     //     printf("\n");
     // }
@@ -154,6 +159,7 @@ int main()
     std::vector<float> elapsed_times(TIMING_RUN);
     for(int i = 0; i < TIMING_RUN; i++)
     {
+        HIP_CHECK(hipMemset(d_output, 0, o_size * sizeof(float)));
         HIP_CHECK(hipEventRecord(start, NULL));
         run_kernel(kernel_num, d_input, d_output, d_filter, N, inC, inH, inW,
                    outC, outH, outW, filterH, filterW);

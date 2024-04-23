@@ -16,8 +16,10 @@ void run_direct_conv(float * __restrict__ in,
                 int filter_width)
 {
 
+    // Another option is 4x16
     const int BLOCK_HEIGHT = 4;
     const int BLOCK_WIDTH = 16;
+
     
     const int FILTER_HEIGHT = CONV_F_H;
     const int FILTER_WIDTH = CONV_F_W;
@@ -32,6 +34,13 @@ void run_direct_conv(float * __restrict__ in,
 
     dim3 block(BLOCK_WIDTH, BLOCK_HEIGHT);
     dim3 grid(out_width / BLOCK_WIDTH, out_height / BLOCK_HEIGHT);
+
+    assert((out_width / BLOCK_WIDTH) > 0);
+    assert((out_height / BLOCK_HEIGHT) > 0);
+
+    // printf("Block Shape: %d %d\n", BLOCK_WIDTH, BLOCK_HEIGHT);
+    // printf("out_width: %d\n", out_width);
+    // printf("Grid Shape: %d %d\n", out_width / BLOCK_WIDTH, out_height / BLOCK_HEIGHT);
 
     gpu_direct_conv2d<BLOCK_HEIGHT, BLOCK_WIDTH, FILTER_HEIGHT, FILTER_WIDTH,
                       MALLOC_FILTER_HEIGHT, MALLOC_FILTER_WIDTH,
