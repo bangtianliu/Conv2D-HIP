@@ -51,12 +51,10 @@ __global__
   int extra_col = outW % BLOCK_WIDTH;  // 5
 
   if (row_boundary) {
-    // 16 + 5 + 5
     in_block_height = BLOCK_HEIGHT + extra_row + FILTER_HEIGHT - 1;
   }
 
   if (col_boundary) {
-    // 4 + 5 + 5
     in_block_width = BLOCK_WIDTH + extra_col + FILTER_WIDTH - 1;
   }
 
@@ -86,6 +84,7 @@ __global__
 
   int out_pos, temp_pos;
 
+  // Another TODO: Tiling also along the channel dimension
   for (int oc = 0; oc < outC; oc++) {
     int out_base = oc * outH * outW + block_y * BLOCK_HEIGHT * outW +
                    block_x * BLOCK_WIDTH + thread_y * outW + thread_x + batch_id * outC * outH * outW;
@@ -100,9 +99,9 @@ __global__
               in[in_offset + (ic) * (inH * inW) +
                  (thread_y + i * BLOCK_HEIGHT) * inW + thread_x +
                  j * BLOCK_WIDTH];
-          __syncthreads();
+          // __syncthreads();
         }
-        __syncthreads();
+        // __syncthreads();
         if ((thread_x + (num_col_wave)*BLOCK_WIDTH) < in_block_width) {
           s_in[thread_y + i * BLOCK_HEIGHT]
               [thread_x + (num_col_wave)*BLOCK_WIDTH] =
@@ -112,7 +111,7 @@ __global__
         }
       }
 
-      __syncthreads();
+      // __syncthreads();
 
       if (thread_y + (num_row_wave)*BLOCK_HEIGHT < in_block_height) {
         for (int j = 0; j < num_col_wave; j++) {
@@ -144,7 +143,8 @@ __global__
       //     printf("\n");
       //   }
       // }
-
+      
+      //TODO: this part can be optimized further
       if (FILTER_HEIGHT < BLOCK_HEIGHT) {
         // fetch filter data from global memory to shared memory
         if (thread_y >= 0 && thread_y < FILTER_HEIGHT && thread_x == 0) {
