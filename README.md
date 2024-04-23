@@ -7,7 +7,7 @@ This code repository pertains to Bangtian's introductory task, focusing on the i
 
 parameters for convolution can be changed in `conv_config.hpp`.
 
-## Bangtian's Convolution Implementation
+## Bangtian's Convolution Implementations
 <!-- Description about code -->
 | ID  |            Kernel Method             |                                           Comment                                            | 
 |:---:|:------------------------------------:|:--------------------------------------------------------------------------------------------:|  
