@@ -11,7 +11,7 @@ parameters for convolution can be changed in `conv_config.hpp`.
 <!-- Description about code -->
 | ID  |            Kernel Method             |                                           Comment                                            | 
 |:---:|:------------------------------------:|:--------------------------------------------------------------------------------------------:|  
-| 1  | direct 2D convolution  |                        shared memory is used, FP32   (kernels/1_*.hpp)                         |
+| 1  | direct 2D convolution  |                        shared memory is used, NCHW format   (kernels/1_*.hpp)                         |
 <!--  Description about code -->
 
 (Additional implementations will be included, with the im2col implementation currently in progress.)
