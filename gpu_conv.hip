@@ -33,7 +33,7 @@ void run_direct_conv(float * __restrict__ in,
 
 
     dim3 block(BLOCK_WIDTH, BLOCK_HEIGHT);
-    dim3 grid(out_width / BLOCK_WIDTH, out_height / BLOCK_HEIGHT);
+    dim3 grid(out_width / BLOCK_WIDTH, out_height / BLOCK_HEIGHT, batch_size);
 
     assert((out_width / BLOCK_WIDTH) > 0);
     assert((out_height / BLOCK_HEIGHT) > 0);

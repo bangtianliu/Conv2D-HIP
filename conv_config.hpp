@@ -1,7 +1,7 @@
 #ifndef CONV_CONFIG_HPP
 #define CONV_CONFIG_HPP
 
-#define CONV_N 1
+#define CONV_N 2
 #define CONV_IN_C 1280 
 #define CONV_IN_H 32
 #define CONV_IN_W 32

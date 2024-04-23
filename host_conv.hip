@@ -15,7 +15,7 @@ void host_conv(const float * __restrict__ in,
                 int filter_height,
                 int filter_width)
 {
-    assert(batch_size == 1);  // only support batch_size = 1
+    // assert(batch_size == 1);  // only support batch_size = 1
 
     // 7 for loops 
     

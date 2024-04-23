@@ -17,7 +17,7 @@
 #define DEVICE_CHECK 
 
 #define WARMUP_RUN 0
-#define TIMING_RUN 10
+#define TIMING_RUN 1
 
 // #define  USE_FP16
 
